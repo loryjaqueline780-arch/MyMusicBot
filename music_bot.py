@@ -42,7 +42,7 @@ async def start_cmd(client, message):
     await message.reply(text)
 
 # ==========================================
-# MUSIQA QIDIRISH (Yangi kuchli dvigatel)
+# MUSIQA QIDIRISH (Yangi kuchli dvigatel + To'g'rilangan so'rov)
 # ==========================================
 @app.on_message(filters.text & filters.private)
 async def search_music(client, message):
@@ -53,12 +53,19 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        ydl_opts = {'quiet': True, 'extract_flat': True, 'default_search': 'ytsearch30'}
+        ydl_opts = {
+            'quiet': True, 
+            'extract_flat': True
+        }
         
         loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(query, download=False))
+        # ytsearch30: qo'shildi - endi bot 100% musiqani izlaydi
+        info = await loop.run_in_executor(
+            None, 
+            lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False)
+        )
         
-        results = info.get('entries', [])
+        results = list(info.get('entries', []))
         
         if not results:
             await status_msg.edit("❌ Ничего не найдено. Попробуйте изменить запрос.")
