@@ -4,24 +4,33 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 import os
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from youtubesearchpython import VideosSearch
 import yt_dlp
 
 # 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
 api_hash = "3c89cf48606380405e9bd3adcb5dc165"
-BOT_TOKEN = "514440846:AAHTjUfBDhpVmxDfY0AJSaQEE8sjJ_E6YZk" # Sizning tokeningiz
+BOT_TOKEN = "514440846:AAHTjUfBDhpVmxDfY0AJSaQEE8sjJ_E6YZk"
 
-# 24/7 ishlashi uchun uyg'otkich
 from keep_alive import keep_alive
 
 app = Client("music_session", api_id=api_id, api_hash=api_hash, bot_token=BOT_TOKEN)
 
-# Foydalanuvchilarning qidiruv natijalarini xotirada saqlash (Sahifalar uchun)
 user_searches = {}
 
+# Vaqtni to'g'ri ko'rsatish uchun yordamchi funksiya
+def format_time(seconds):
+    if not seconds: return "?:??"
+    try:
+        seconds = int(seconds)
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        if h: return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
+    except:
+        return "?:??"
+
 # ==========================================
-# /START BUYRUG'I (Rus tilida)
+# /START BUYRUG'I
 # ==========================================
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
@@ -33,7 +42,7 @@ async def start_cmd(client, message):
     await message.reply(text)
 
 # ==========================================
-# MUSIQA QIDIRISH 
+# MUSIQA QIDIRISH (Yangi kuchli dvigatel)
 # ==========================================
 @app.on_message(filters.text & filters.private)
 async def search_music(client, message):
@@ -44,9 +53,12 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        # 30 ta natija qidiramiz (sahifalarga bo'lish uchun)
-        videos_search = VideosSearch(query, limit=30)
-        results = videos_search.result()['result']
+        ydl_opts = {'quiet': True, 'extract_flat': True, 'default_search': 'ytsearch30'}
+        
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(query, download=False))
+        
+        results = info.get('entries', [])
         
         if not results:
             await status_msg.edit("❌ Ничего не найдено. Попробуйте изменить запрос.")
@@ -54,14 +66,13 @@ async def search_music(client, message):
             
         user_searches[uid] = {'query': query, 'results': results}
         
-        # 1-sahifani ko'rsatamiz
         await show_page(client, message, uid, 0, status_msg)
         
     except Exception as e:
         await status_msg.edit(f"❌ Ошибка при поиске: {e}")
 
 # ==========================================
-# SAHIFALARNI KO'RSATISH FUNKSIYASI (1-10)
+# SAHIFALARNI KO'RSATISH
 # ==========================================
 async def show_page(client, message, uid, page, status_msg=None):
     data = user_searches.get(uid)
@@ -78,25 +89,26 @@ async def show_page(client, message, uid, page, status_msg=None):
     
     text = f"🔎 Результаты по запросу: **{query}**\nСтраница: {page+1}\n\n"
     
+    buttons = []
+    row1 = []
+    row2 = []
+    
     for i, video in enumerate(page_results):
         title = video.get('title', 'Неизвестно')
-        duration = video.get('duration', '?:??')
-        channel = video.get('channel', {}).get('name', '')
+        duration = format_time(video.get('duration'))
+        channel = video.get('uploader', '')
+        
         text += f"**{i+1}.** {title} ({duration})\n"
         if channel: text += f"👤 {channel}\n\n"
         else: text += "\n"
         
-    # TUGMALAR YASASH
-    buttons = []
-    
-    row1 = []
-    for i in range(min(5, len(page_results))):
-        row1.append(InlineKeyboardButton(str(i+1), callback_data=f"dl_{page_results[i]['id']}"))
+        vid_id = video.get('id')
+        if i < 5:
+            row1.append(InlineKeyboardButton(str(i+1), callback_data=f"dl_{vid_id}"))
+        else:
+            row2.append(InlineKeyboardButton(str(i+1), callback_data=f"dl_{vid_id}"))
+            
     if row1: buttons.append(row1)
-    
-    row2 = []
-    for i in range(5, len(page_results)):
-        row2.append(InlineKeyboardButton(str(i+1), callback_data=f"dl_{page_results[i]['id']}"))
     if row2: buttons.append(row2)
     
     if len(page_results) > 1:
@@ -117,7 +129,7 @@ async def show_page(client, message, uid, page, status_msg=None):
         await message.edit(text, reply_markup=reply_markup, disable_web_page_preview=True)
 
 # ==========================================
-# SAHIFAGA O'TISH
+# TUGMALAR FUNKSIYALARI
 # ==========================================
 @app.on_callback_query(filters.regex(r"^page_"))
 async def change_page(client, callback_query):
@@ -129,9 +141,6 @@ async def change_page(client, callback_query):
         
     await show_page(client, callback_query.message, uid, page)
 
-# ==========================================
-# BITTA MUSIQANI YUKLASH
-# ==========================================
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
@@ -139,9 +148,6 @@ async def download_single(client, callback_query):
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
     await status_msg.delete()
 
-# ==========================================
-# BARCHASINI YUKLASH (10 ta)
-# ==========================================
 @app.on_callback_query(filters.regex(r"^dlall_"))
 async def download_all(client, callback_query):
     uid = callback_query.from_user.id
@@ -161,9 +167,6 @@ async def download_all(client, callback_query):
         
     await status_msg.edit("✅ **Все треки успешно загружены!**")
 
-# ==========================================
-# MP3 YUKLASH LOGIKASI
-# ==========================================
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
     file_name = f"{vid_id}.mp3"
@@ -180,10 +183,15 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     }
     
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'Неизвестный трек')
-            performer = info.get('uploader', 'Неизвестный исполнитель')
+        loop = asyncio.get_event_loop()
+        def download_sync():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=True)
+                
+        info = await loop.run_in_executor(None, download_sync)
+        
+        title = info.get('title', 'Неизвестный трек')
+        performer = info.get('uploader', 'Неизвестный исполнитель')
         
         await client.send_audio(
             chat_id=chat_id,
@@ -193,8 +201,7 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             caption="🎧 Скачано через бота"
         )
     except Exception as e:
-        if status_message:
-            pass 
+        pass 
     finally:
         if os.path.exists(file_name):
             os.remove(file_name)
