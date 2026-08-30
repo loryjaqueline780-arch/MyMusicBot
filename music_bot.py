@@ -139,7 +139,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     uid_str = str(uuid.uuid4())[:8]
     base_name = f"track_{uid_str}"
     
-    # DIQQAT: Konvertatsiyani (FFmpeg) o'chirdik! Endi tezkor M4A yuklanadi.
     ydl_opts = {
         'format': 'm4a/bestaudio/best',
         'outtmpl': f'{base_name}.%(ext)s',
@@ -147,6 +146,10 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         'noplaylist': True,
         'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
     }
+    
+    # ENGIN MUHIM QISM: Pasportni (cookies) botga taqdim etamiz!
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = "cookies.txt"
     
     try:
         loop = asyncio.get_event_loop()
@@ -158,7 +161,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         
         if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
         
-        # O'sha yuklangan asl faylni topamiz
         file_to_send = None
         for file in glob.glob(f"{base_name}.*"):
             if not file.endswith('.part') and not file.endswith('.ytdl'):
@@ -194,11 +196,10 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         if status_message: await status_message.edit(f"❌ Хатолик:\n\n`{error_msg[:150]}`")
         return False
     finally:
-        # Ishlatilgan fayllarni tozalaymiz
         for file in glob.glob(f"{base_name}.*"):
             try: os.remove(file)
             except: pass
 
-print("✅ Музыкальный бот успешно запущен (Tezkor M4A Mode)!")
+print("✅ Музыкальный бот успешно запущен (Tezkor M4A + Cookies Mode)!")
 keep_alive()
 app.run()
