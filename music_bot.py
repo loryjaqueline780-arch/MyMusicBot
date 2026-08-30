@@ -2,6 +2,7 @@ import asyncio
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 import os
+import uuid
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
@@ -140,12 +141,17 @@ async def download_all(client, callback_query):
 
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
-    file_name = f"{vid_id}.mp3"
+    
+    # Fayllar chalkashmasligi uchun unikal nom yasaymiz
+    uid_str = str(uuid.uuid4())[:8]
+    base_name = f"track_{uid_str}"
+    
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': f'{vid_id}.%(ext)s',
-        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(), 
+        'outtmpl': f'{base_name}.%(ext)s',
+        'ffmpeg_location': ffmpeg_path, 
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -166,12 +172,26 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         if status_message:
             await status_message.edit("⬆️ *Отправляю в Telegram...*")
             
+        # Aqlli tekshiruv: MP3 o'xshadimi yoki yo'qmi?
+        file_to_send = None
+        if os.path.exists(f"{base_name}.mp3"):
+            file_to_send = f"{base_name}.mp3"
+        else:
+            # Agar Render FFmpeg'ni bloklagan bo'lsa, quruq qolmaslik uchun original formatni beramiz
+            for ext in ['m4a', 'webm', 'opus']:
+                if os.path.exists(f"{base_name}.{ext}"):
+                    file_to_send = f"{base_name}.{ext}"
+                    break
+        
+        if not file_to_send:
+            raise Exception("Render serveri faylni yuklashni blokladi.")
+
         title = info.get('title', 'Неизвестный трек')
         performer = info.get('uploader', 'Неизвестный исполнитель')
         
         await client.send_audio(
             chat_id=chat_id,
-            audio=file_name,
+            audio=file_to_send,
             title=title,
             performer=performer,
             caption="🎧 Скачано через бота"
@@ -182,14 +202,17 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     except Exception as e:
         error_msg = str(e)
         if status_message:
-            # ENDI XATOLIK TELEGRAMDA KO'RINADI!
             await status_message.edit(f"❌ Ошибка:\n`{error_msg[:200]}`")
         else:
             await client.send_message(chat_id, f"❌ Ошибка:\n`{error_msg[:200]}`")
         return False
     finally:
-        if os.path.exists(file_name):
-            os.remove(file_name)
+        # Xotirani tozalash
+        for ext in ['mp3', 'm4a', 'webm', 'opus']:
+            f = f"{base_name}.{ext}"
+            if os.path.exists(f):
+                try: os.remove(f)
+                except: pass
 
 print("✅ Музыкальный бот успешно запущен!")
 keep_alive()
