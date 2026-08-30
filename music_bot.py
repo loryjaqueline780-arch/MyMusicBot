@@ -2,12 +2,12 @@ import asyncio
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 import os
+import glob
 import uuid
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from youtubesearchpython import VideosSearch
 import yt_dlp
-import imageio_ffmpeg 
 
 # 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
@@ -113,7 +113,7 @@ async def change_page(client, callback_query):
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
-    status_msg = await callback_query.message.reply("⏳ *Подготовка аудио (MP3)...*")
+    status_msg = await callback_query.message.reply("⏳ *Загрузка аудио...*")
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
 
 @app.on_callback_query(filters.regex(r"^dlall_"))
@@ -139,20 +139,12 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     uid_str = str(uuid.uuid4())[:8]
     base_name = f"track_{uid_str}"
     
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    
+    # DIQQAT: Konvertatsiyani (FFmpeg) o'chirdik! Endi tezkor M4A yuklanadi.
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'm4a/bestaudio/best',
         'outtmpl': f'{base_name}.%(ext)s',
-        'ffmpeg_location': ffmpeg_path, 
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
         'quiet': True,
         'noplaylist': True,
-        # KUCHAYTIRILGAN NIQOB: Ham Android, ham iOS, ham Web ko'rinishida urinamiz
         'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
     }
     
@@ -166,17 +158,15 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         
         if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
         
+        # O'sha yuklangan asl faylni topamiz
         file_to_send = None
-        if os.path.exists(f"{base_name}.mp3"):
-            file_to_send = f"{base_name}.mp3"
-        else:
-            for ext in ['m4a', 'webm', 'opus']:
-                if os.path.exists(f"{base_name}.{ext}"):
-                    file_to_send = f"{base_name}.{ext}"
-                    break
+        for file in glob.glob(f"{base_name}.*"):
+            if not file.endswith('.part') and not file.endswith('.ytdl'):
+                file_to_send = file
+                break
         
         if not file_to_send:
-            raise Exception("Fayl konvertatsiya qilinmadi (FFmpeg xatosi bo'lishi mumkin).")
+            raise Exception("YouTube musiqani berdi, lekin u server xotirasida saqlanmadi.")
 
         title = "Неизвестный трек"
         performer = "Неизвестный исполнитель"
@@ -201,16 +191,14 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         
     except Exception as e:
         error_msg = str(e)
-        # DIQQAT: XATONI ENDI YASHIRMAYMIZ! OCHIQCHASIGA KORSATAMIZ.
-        if status_message: await status_message.edit(f"❌ Аниқ хатолик:\n\n`{error_msg}`")
+        if status_message: await status_message.edit(f"❌ Хатолик:\n\n`{error_msg[:150]}`")
         return False
     finally:
-        for ext in ['mp3', 'm4a', 'webm', 'opus']:
-            f = f"{base_name}.{ext}"
-            if os.path.exists(f):
-                try: os.remove(f)
-                except: pass
+        # Ishlatilgan fayllarni tozalaymiz
+        for file in glob.glob(f"{base_name}.*"):
+            try: os.remove(file)
+            except: pass
 
-print("✅ Музыкальный бот успешно запущен (Diagnostika Mode)!")
+print("✅ Музыкальный бот успешно запущен (Tezkor M4A Mode)!")
 keep_alive()
 app.run()
