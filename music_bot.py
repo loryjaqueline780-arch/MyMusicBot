@@ -142,7 +142,6 @@ async def download_all(client, callback_query):
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
     
-    # Fayllar chalkashmasligi uchun unikal nom yasaymiz
     uid_str = str(uuid.uuid4())[:8]
     base_name = f"track_{uid_str}"
     
@@ -158,7 +157,9 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             'preferredquality': '192',
         }],
         'quiet': True,
-        'noplaylist': True
+        'noplaylist': True,
+        # YOUTUBE'NI ALDASH UCHUN NIQOB (Android mijozi):
+        'extractor_args': {'youtube': {'client': ['android']}}
     }
     
     try:
@@ -172,19 +173,17 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         if status_message:
             await status_message.edit("⬆️ *Отправляю в Telegram...*")
             
-        # Aqlli tekshiruv: MP3 o'xshadimi yoki yo'qmi?
         file_to_send = None
         if os.path.exists(f"{base_name}.mp3"):
             file_to_send = f"{base_name}.mp3"
         else:
-            # Agar Render FFmpeg'ni bloklagan bo'lsa, quruq qolmaslik uchun original formatni beramiz
             for ext in ['m4a', 'webm', 'opus']:
                 if os.path.exists(f"{base_name}.{ext}"):
                     file_to_send = f"{base_name}.{ext}"
                     break
         
         if not file_to_send:
-            raise Exception("Render serveri faylni yuklashni blokladi.")
+            raise Exception("Fayl konvertatsiya qilinmadi.")
 
         title = info.get('title', 'Неизвестный трек')
         performer = info.get('uploader', 'Неизвестный исполнитель')
@@ -207,7 +206,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             await client.send_message(chat_id, f"❌ Ошибка:\n`{error_msg[:200]}`")
         return False
     finally:
-        # Xotirani tozalash
         for ext in ['mp3', 'm4a', 'webm', 'opus']:
             f = f"{base_name}.{ext}"
             if os.path.exists(f):
