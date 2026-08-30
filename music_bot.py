@@ -1,3 +1,6 @@
+import asyncio
+asyncio.set_event_loop(asyncio.new_event_loop())
+
 import os
 import uuid
 import requests
@@ -33,7 +36,6 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        # Endi faqat qidiruv uchun youtubesearchpython ishlatamiz (u bloklanmaydi)
         videos_search = VideosSearch(query, limit=30)
         results = videos_search.result()['result']
         
@@ -127,7 +129,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     file_name = f"track_{uid_str}.mp3"
     
     try:
-        # COBALT API orqali yuklash (Bloklanmaydi va FFmpeg kerak emas!)
         api_url = "https://api.cobalt.tools/api/json"
         headers = {
             "Accept": "application/json",
@@ -142,7 +143,7 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         response = requests.post(api_url, headers=headers, json=data)
         
         if response.status_code != 200:
-            raise Exception("API vaqtincha ishlamayapti yoki blokladi.")
+            raise Exception("API vaqtincha ishlamayapti.")
             
         json_data = response.json()
         audio_url = json_data.get("url")
@@ -152,14 +153,12 @@ async def process_download(client, chat_id, vid_id, status_message=None):
 
         if status_message: await status_message.edit("⬇️ *Скачиваю файл...*")
         
-        # Faylni yuklab olish
         audio_data = requests.get(audio_url)
         with open(file_name, 'wb') as f:
             f.write(audio_data.content)
 
         if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
         
-        # Ma'lumotlarni olish uchun qidiruv tarixidan qaraymiz
         title = "Неизвестный трек"
         performer = "Неизвестный исполнитель"
         
