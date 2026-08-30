@@ -2,13 +2,14 @@ import asyncio
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 import os
+import glob
 import uuid
-import httpx
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from youtubesearchpython import VideosSearch
+import yt_dlp
 
-# 1. API VA TOKEN MA'LUMOTLARI
+# 1. API VA TOKEN MA'LUMOTLari
 api_id = 34019495
 api_hash = "3c89cf48606380405e9bd3adcb5dc165"
 BOT_TOKEN = "514440846:AAHTjUfBDhpVmxDfY0AJSaQEE8sjJ_E6YZk"
@@ -32,7 +33,7 @@ def format_time(seconds):
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
     text = (
-        "🎧 **Добро пожаловать в Музыкальный Бот (PRO Версия)!**\n\n"
+        "🎧 **Добро пожаловать в Музыкальный Бот!**\n\n"
         "Отправьте мне название песни или имя исполнителя."
     )
     await message.reply(text)
@@ -112,7 +113,7 @@ async def change_page(client, callback_query):
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
-    status_msg = await callback_query.message.reply("⏳ *Устанавливаю соединение...*")
+    status_msg = await callback_query.message.reply("⏳ *Загрузка аудио...*")
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
 
 @app.on_callback_query(filters.regex(r"^dlall_"))
@@ -123,7 +124,7 @@ async def download_all(client, callback_query):
     
     start_idx = page * 10
     page_results = user_searches[uid]['results'][start_idx : start_idx+10]
-    status_msg = await callback_query.message.reply(f"📥 *Начинаю пакетную загрузку {len(page_results)} треков...*")
+    status_msg = await callback_query.message.reply(f"📥 *Начинаю загрузку {len(page_results)} треков...*")
     
     for i, video in enumerate(page_results):
         await status_msg.edit(f"⏳ *Загружаю трек {i+1} из {len(page_results)}...*\n🎵 {video.get('title')}")
@@ -131,59 +132,41 @@ async def download_all(client, callback_query):
         if not success: 
             break
             
-    await status_msg.edit("✅ **Пакетная загрузка успешно завершена!**")
-
-# ==========================================
-# PRO YECHIM: 3 TA ZAXIRA API (Fallback Tizimi)
-# ==========================================
-async def get_audio_url(youtube_url):
-    apis = [
-        "https://api.cobalt.tools/api/json",
-        "https://co.wuk.sh/api/json",
-        "https://cobalt.qewertyy.dev/api/json"
-    ]
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    data = {"url": youtube_url, "isAudioOnly": True, "aFormat": "mp3"}
-    
-    async with httpx.AsyncClient(timeout=15.0) as http_client:
-        for api in apis:
-            try:
-                response = await http_client.post(api, json=data, headers=headers)
-                if response.status_code == 200:
-                    url = response.json().get("url")
-                    if url: return url
-            except Exception:
-                continue # Agar bitta server qotib qolgan bo'lsa, ikkinchisiga o'tadi
-    return None
+    await status_msg.edit("✅ **Загрузка завершена!**")
 
 async def process_download(client, chat_id, vid_id, status_message=None):
-    youtube_url = f"https://www.youtube.com/watch?v={vid_id}"
-    file_name = f"track_{uuid.uuid4().hex[:8]}.mp3"
+    url = f"https://www.youtube.com/watch?v={vid_id}"
+    uid_str = str(uuid.uuid4())[:8]
+    base_name = f"track_{uid_str}"
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': f'{base_name}.%(ext)s',
+        'quiet': True,
+        'noplaylist': True,
+        # YouTube bloklamasligi uchun eng so'nggi o'tish usuli
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
+    }
     
     try:
-        # 1-Bosqich: Xavfsiz URL olish (Blokirovkani aylanib o'tish)
-        audio_url = await get_audio_url(youtube_url)
-        if not audio_url:
-            raise Exception("Все резервные серверы заняты. Попробуйте через минуту.")
-
-        if status_message: await status_message.edit("⬇️ *Скачиваю аудиофайл (MP3)...*")
-        
-        # 2-Bosqich: Tezkor (Asinxron) yuklash
-        async with httpx.AsyncClient(timeout=60.0) as http_client:
-            response = await http_client.get(audio_url)
-            if response.status_code != 200:
-                raise Exception("Ошибка при загрузке аудиофайла.")
+        loop = asyncio.get_event_loop()
+        def download_sync():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=True)
                 
-            with open(file_name, 'wb') as f:
-                f.write(response.content)
-
+        info = await loop.run_in_executor(None, download_sync)
+        
         if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
         
-        # 3-Bosqich: Ma'lumotlarni yig'ish va jo'natish
+        file_to_send = None
+        for file in glob.glob(f"{base_name}.*"):
+            if not file.endswith('.part') and not file.endswith('.ytdl'):
+                file_to_send = file
+                break
+        
+        if not file_to_send:
+            raise Exception("Fayl topilmadi.")
+
         title = "Неизвестный трек"
         performer = "Неизвестный исполнитель"
         
@@ -197,7 +180,7 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         
         await client.send_audio(
             chat_id=chat_id,
-            audio=file_name,
+            audio=file_to_send,
             title=title,
             performer=performer,
             caption="🎧 Скачано через бота"
@@ -206,14 +189,13 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         return True
         
     except Exception as e:
-        error_msg = str(e)
-        if status_message: await status_message.edit(f"❌ Ошибка:\n`{error_msg}`")
+        if status_message: await status_message.edit(f"❌ Yuklab bo'lmadi. Boshqa qo'shiqni tanlang.")
         return False
     finally:
-        if os.path.exists(file_name):
-            try: os.remove(file_name)
+        for file in glob.glob(f"{base_name}.*"):
+            try: os.remove(file)
             except: pass
 
-print("✅ Бот успешно запущен (API Gateway PRO Mode)!")
+print("✅ Бот запущен (Native yt-dlp Direct Mode)!")
 keep_alive()
 app.run()
