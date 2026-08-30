@@ -48,6 +48,9 @@ async def search_music(client, message):
     
     try:
         ydl_opts = {'quiet': True, 'extract_flat': True}
+        if os.path.exists("cookies.txt"):
+            ydl_opts['cookiefile'] = "cookies.txt"
+            
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False))
         
@@ -78,8 +81,7 @@ async def show_page(client, message, uid, page, status_msg=None):
     
     text = f"🔎 Результаты по запросу: **{query}**\nСтраница: {page+1}\n\n"
     buttons = []
-    row1 = []
-    row2 = []
+    row1, row2 = [], []
     
     for i, video in enumerate(page_results):
         title = video.get('title', 'Неизвестно')
@@ -134,33 +136,33 @@ async def download_all(client, callback_query):
         await status_msg.edit(f"⏳ *Загружаю трек {i+1} из {len(page_results)}...*\n🎵 {video.get('title')}")
         success = await process_download(client, uid, video['id'])
         if not success: 
-            await status_msg.reply(f"❌ Xatolik sababli {i+1}-trektda to'xtadi.")
             break
             
     await status_msg.edit("✅ **Загрузка завершена!**")
 
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
-    
     uid_str = str(uuid.uuid4())[:8]
     base_name = f"track_{uid_str}"
-    
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': f'{base_name}.%(ext)s',
-        'ffmpeg_location': ffmpeg_path, 
+        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(), 
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
         'quiet': True,
-        'noplaylist': True,
-        # YOUTUBE'NI ALDASH UCHUN NIQOB (Android mijozi):
-        'extractor_args': {'youtube': {'client': ['android']}}
+        'noplaylist': True
     }
+    
+    # Keks (Pasport) fayli bormi tekshiramiz
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = "cookies.txt"
+    else:
+        ydl_opts['extractor_args'] = {'youtube': {'client': ['tv', 'mweb']}}
     
     try:
         loop = asyncio.get_event_loop()
@@ -170,40 +172,24 @@ async def process_download(client, chat_id, vid_id, status_message=None):
                 
         info = await loop.run_in_executor(None, download_sync)
         
-        if status_message:
-            await status_message.edit("⬆️ *Отправляю в Telegram...*")
+        if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
             
-        file_to_send = None
-        if os.path.exists(f"{base_name}.mp3"):
-            file_to_send = f"{base_name}.mp3"
-        else:
-            for ext in ['m4a', 'webm', 'opus']:
-                if os.path.exists(f"{base_name}.{ext}"):
-                    file_to_send = f"{base_name}.{ext}"
-                    break
+        file_to_send = f"{base_name}.mp3" if os.path.exists(f"{base_name}.mp3") else next((f"{base_name}.{ext}" for ext in ['m4a', 'webm', 'opus'] if os.path.exists(f"{base_name}.{ext}")), None)
         
-        if not file_to_send:
-            raise Exception("Fayl konvertatsiya qilinmadi.")
+        if not file_to_send: raise Exception("Fayl konvertatsiya qilinmadi.")
 
-        title = info.get('title', 'Неизвестный трек')
-        performer = info.get('uploader', 'Неизвестный исполнитель')
-        
         await client.send_audio(
             chat_id=chat_id,
             audio=file_to_send,
-            title=title,
-            performer=performer,
+            title=info.get('title', 'Неизвестный трек'),
+            performer=info.get('uploader', 'Неизвестный исполнитель'),
             caption="🎧 Скачано через бота"
         )
-        if status_message:
-            await status_message.delete()
+        if status_message: await status_message.delete()
         return True
     except Exception as e:
         error_msg = str(e)
-        if status_message:
-            await status_message.edit(f"❌ Ошибка:\n`{error_msg[:200]}`")
-        else:
-            await client.send_message(chat_id, f"❌ Ошибка:\n`{error_msg[:200]}`")
+        if status_message: await status_message.edit(f"❌ Ошибка:\n`{error_msg[:150]}...`\n\n💡 Iltimos, GitHubga cookies.txt faylini yuklang!")
         return False
     finally:
         for ext in ['mp3', 'm4a', 'webm', 'opus']:
