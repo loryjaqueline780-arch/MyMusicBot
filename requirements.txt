@@ -3,5 +3,3 @@ tgcrypto
 yt-dlp
 youtube-search-python
 Flask
-httpx==0.27.2
-imageio-ffmpeg
