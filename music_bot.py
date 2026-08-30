@@ -1,12 +1,9 @@
-import asyncio
-asyncio.set_event_loop(asyncio.new_event_loop())
-
 import os
 import uuid
+import requests
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-import yt_dlp
-import imageio_ffmpeg 
+from youtubesearchpython import VideosSearch
 
 # 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
@@ -18,17 +15,6 @@ from keep_alive import keep_alive
 app = Client("music_session", api_id=api_id, api_hash=api_hash, bot_token=BOT_TOKEN)
 
 user_searches = {}
-
-def format_time(seconds):
-    if not seconds: return "?:??"
-    try:
-        seconds = int(seconds)
-        m, s = divmod(seconds, 60)
-        h, m = divmod(m, 60)
-        if h: return f"{h}:{m:02d}:{s:02d}"
-        return f"{m}:{s:02d}"
-    except:
-        return "?:??"
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
@@ -47,14 +33,9 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        ydl_opts = {'quiet': True, 'extract_flat': True}
-        if os.path.exists("cookies.txt"):
-            ydl_opts['cookiefile'] = "cookies.txt"
-            
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False))
-        
-        results = list(info.get('entries', []))
+        # Endi faqat qidiruv uchun youtubesearchpython ishlatamiz (u bloklanmaydi)
+        videos_search = VideosSearch(query, limit=30)
+        results = videos_search.result()['result']
         
         if not results:
             await status_msg.edit("❌ Ничего не найдено. Попробуйте изменить запрос.")
@@ -85,8 +66,8 @@ async def show_page(client, message, uid, page, status_msg=None):
     
     for i, video in enumerate(page_results):
         title = video.get('title', 'Неизвестно')
-        duration = format_time(video.get('duration'))
-        channel = video.get('uploader', '')
+        duration = video.get('duration', '?:??')
+        channel = video.get('channel', {}).get('name', '')
         
         text += f"**{i+1}.** {title} ({duration})\n"
         if channel: text += f"👤 {channel}\n\n"
@@ -119,7 +100,7 @@ async def change_page(client, callback_query):
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
-    status_msg = await callback_query.message.reply("⏳ *Загрузка трека...*")
+    status_msg = await callback_query.message.reply("⏳ *Подготовка аудио...*")
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
 
 @app.on_callback_query(filters.regex(r"^dlall_"))
@@ -143,61 +124,71 @@ async def download_all(client, callback_query):
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
     uid_str = str(uuid.uuid4())[:8]
-    base_name = f"track_{uid_str}"
-    
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': f'{base_name}.%(ext)s',
-        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(), 
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-        'noplaylist': True
-    }
-    
-    # Keks (Pasport) fayli bormi tekshiramiz
-    if os.path.exists("cookies.txt"):
-        ydl_opts['cookiefile'] = "cookies.txt"
-    else:
-        ydl_opts['extractor_args'] = {'youtube': {'client': ['tv', 'mweb']}}
+    file_name = f"track_{uid_str}.mp3"
     
     try:
-        loop = asyncio.get_event_loop()
-        def download_sync():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=True)
-                
-        info = await loop.run_in_executor(None, download_sync)
+        # COBALT API orqali yuklash (Bloklanmaydi va FFmpeg kerak emas!)
+        api_url = "https://api.cobalt.tools/api/json"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "url": url,
+            "isAudioOnly": True,
+            "aFormat": "mp3"
+        }
         
-        if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
+        response = requests.post(api_url, headers=headers, json=data)
+        
+        if response.status_code != 200:
+            raise Exception("API vaqtincha ishlamayapti yoki blokladi.")
             
-        file_to_send = f"{base_name}.mp3" if os.path.exists(f"{base_name}.mp3") else next((f"{base_name}.{ext}" for ext in ['m4a', 'webm', 'opus'] if os.path.exists(f"{base_name}.{ext}")), None)
+        json_data = response.json()
+        audio_url = json_data.get("url")
         
-        if not file_to_send: raise Exception("Fayl konvertatsiya qilinmadi.")
+        if not audio_url:
+             raise Exception("Audio havola topilmadi.")
 
+        if status_message: await status_message.edit("⬇️ *Скачиваю файл...*")
+        
+        # Faylni yuklab olish
+        audio_data = requests.get(audio_url)
+        with open(file_name, 'wb') as f:
+            f.write(audio_data.content)
+
+        if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
+        
+        # Ma'lumotlarni olish uchun qidiruv tarixidan qaraymiz
+        title = "Неизвестный трек"
+        performer = "Неизвестный исполнитель"
+        
+        data_search = user_searches.get(chat_id)
+        if data_search:
+             for video in data_search['results']:
+                  if video.get('id') == vid_id:
+                       title = video.get('title', title)
+                       performer = video.get('channel', {}).get('name', performer)
+                       break
+        
         await client.send_audio(
             chat_id=chat_id,
-            audio=file_to_send,
-            title=info.get('title', 'Неизвестный трек'),
-            performer=info.get('uploader', 'Неизвестный исполнитель'),
+            audio=file_name,
+            title=title,
+            performer=performer,
             caption="🎧 Скачано через бота"
         )
         if status_message: await status_message.delete()
         return True
+        
     except Exception as e:
-        error_msg = str(e)
-        if status_message: await status_message.edit(f"❌ Ошибка:\n`{error_msg[:150]}...`\n\n💡 Iltimos, GitHubga cookies.txt faylini yuklang!")
+        if status_message: await status_message.edit(f"❌ Ошибка:\n`Сервис перегружен, попробуйте позже.`")
         return False
     finally:
-        for ext in ['mp3', 'm4a', 'webm', 'opus']:
-            f = f"{base_name}.{ext}"
-            if os.path.exists(f):
-                try: os.remove(f)
-                except: pass
+        if os.path.exists(file_name):
+            try: os.remove(file_name)
+            except: pass
 
-print("✅ Музыкальный бот успешно запущен!")
+print("✅ Музыкальный бот успешно запущен (Cobalt Mode)!")
 keep_alive()
 app.run()
