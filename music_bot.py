@@ -152,8 +152,8 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         }],
         'quiet': True,
         'noplaylist': True,
-        # ASOSIY MO'JIZA SHU YERDA: To'g'ri yozilgan Android niqobi!
-        'extractor_args': {'youtube': {'player_client': ['android']}}
+        # KUCHAYTIRILGAN NIQOB: Ham Android, ham iOS, ham Web ko'rinishida urinamiz
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
     }
     
     try:
@@ -176,7 +176,7 @@ async def process_download(client, chat_id, vid_id, status_message=None):
                     break
         
         if not file_to_send:
-            raise Exception("Fayl konvertatsiya qilinmadi.")
+            raise Exception("Fayl konvertatsiya qilinmadi (FFmpeg xatosi bo'lishi mumkin).")
 
         title = "Неизвестный трек"
         performer = "Неизвестный исполнитель"
@@ -201,7 +201,8 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         
     except Exception as e:
         error_msg = str(e)
-        if status_message: await status_message.edit(f"❌ Ошибка загрузки. Попробуйте другой трек.")
+        # DIQQAT: XATONI ENDI YASHIRMAYMIZ! OCHIQCHASIGA KORSATAMIZ.
+        if status_message: await status_message.edit(f"❌ Аниқ хатолик:\n\n`{error_msg}`")
         return False
     finally:
         for ext in ['mp3', 'm4a', 'webm', 'opus']:
@@ -210,6 +211,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
                 try: os.remove(f)
                 except: pass
 
-print("✅ Музыкальный бот успешно запущен (Yt-dlp Android Mode)!")
+print("✅ Музыкальный бот успешно запущен (Diagnostika Mode)!")
 keep_alive()
 app.run()
