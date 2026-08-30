@@ -6,7 +6,8 @@ import uuid
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from youtubesearchpython import VideosSearch
-from pytubefix import YouTube
+import yt_dlp
+import imageio_ffmpeg 
 
 # 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
@@ -112,7 +113,7 @@ async def change_page(client, callback_query):
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
-    status_msg = await callback_query.message.reply("⏳ *Подготовка аудио...*")
+    status_msg = await callback_query.message.reply("⏳ *Подготовка аудио (MP3)...*")
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
 
 @app.on_callback_query(filters.regex(r"^dlall_"))
@@ -136,24 +137,47 @@ async def download_all(client, callback_query):
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
     uid_str = str(uuid.uuid4())[:8]
-    # Telegram .m4a formatini audioplayer qilib ochib beradi
-    file_name = f"track_{uid_str}.m4a" 
+    base_name = f"track_{uid_str}"
+    
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': f'{base_name}.%(ext)s',
+        'ffmpeg_location': ffmpeg_path, 
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+        'noplaylist': True,
+        # ASOSIY MO'JIZA SHU YERDA: To'g'ri yozilgan Android niqobi!
+        'extractor_args': {'youtube': {'player_client': ['android']}}
+    }
     
     try:
         loop = asyncio.get_event_loop()
-        
         def download_sync():
-            # YOUTUBE'NI ALDASH: Bot o'zini Android qurilma deb tanitmoqda (bloklanmaydi)
-            yt = YouTube(url, client='ANDROID')
-            audio_stream = yt.streams.get_audio_only()
-            if not audio_stream:
-                raise Exception("Audio havola topilmadi")
-            audio_stream.download(filename=file_name)
-            
-        await loop.run_in_executor(None, download_sync)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=True)
+                
+        info = await loop.run_in_executor(None, download_sync)
         
         if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
         
+        file_to_send = None
+        if os.path.exists(f"{base_name}.mp3"):
+            file_to_send = f"{base_name}.mp3"
+        else:
+            for ext in ['m4a', 'webm', 'opus']:
+                if os.path.exists(f"{base_name}.{ext}"):
+                    file_to_send = f"{base_name}.{ext}"
+                    break
+        
+        if not file_to_send:
+            raise Exception("Fayl konvertatsiya qilinmadi.")
+
         title = "Неизвестный трек"
         performer = "Неизвестный исполнитель"
         
@@ -167,7 +191,7 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         
         await client.send_audio(
             chat_id=chat_id,
-            audio=file_name,
+            audio=file_to_send,
             title=title,
             performer=performer,
             caption="🎧 Скачано через бота"
@@ -176,13 +200,16 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         return True
         
     except Exception as e:
-        if status_message: await status_message.edit(f"❌ Ошибка:\n`Сервис YouTube заблокировал запрос. Попробуйте еще раз.`\n({str(e)[:50]})")
+        error_msg = str(e)
+        if status_message: await status_message.edit(f"❌ Ошибка загрузки. Попробуйте другой трек.")
         return False
     finally:
-        if os.path.exists(file_name):
-            try: os.remove(file_name)
-            except: pass
+        for ext in ['mp3', 'm4a', 'webm', 'opus']:
+            f = f"{base_name}.{ext}"
+            if os.path.exists(f):
+                try: os.remove(f)
+                except: pass
 
-print("✅ Музыкальный бот успешно запущен (Pytubefix Mode)!")
+print("✅ Музыкальный бот успешно запущен (Yt-dlp Android Mode)!")
 keep_alive()
 app.run()
