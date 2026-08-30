@@ -3,10 +3,10 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 
 import os
 import uuid
-import requests
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from youtubesearchpython import VideosSearch
+from pytubefix import YouTube
 
 # 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
@@ -14,10 +14,20 @@ api_hash = "3c89cf48606380405e9bd3adcb5dc165"
 BOT_TOKEN = "514440846:AAHTjUfBDhpVmxDfY0AJSaQEE8sjJ_E6YZk"
 
 from keep_alive import keep_alive
-
 app = Client("music_session", api_id=api_id, api_hash=api_hash, bot_token=BOT_TOKEN)
 
 user_searches = {}
+
+def format_time(seconds):
+    if not seconds: return "?:??"
+    try:
+        seconds = int(seconds)
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        if h: return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
+    except:
+        return "?:??"
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
@@ -126,37 +136,22 @@ async def download_all(client, callback_query):
 async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
     uid_str = str(uuid.uuid4())[:8]
-    file_name = f"track_{uid_str}.mp3"
+    # Telegram .m4a formatini audioplayer qilib ochib beradi
+    file_name = f"track_{uid_str}.m4a" 
     
     try:
-        api_url = "https://api.cobalt.tools/api/json"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "url": url,
-            "isAudioOnly": True,
-            "aFormat": "mp3"
-        }
+        loop = asyncio.get_event_loop()
         
-        response = requests.post(api_url, headers=headers, json=data)
-        
-        if response.status_code != 200:
-            raise Exception("API vaqtincha ishlamayapti.")
+        def download_sync():
+            # YOUTUBE'NI ALDASH: Bot o'zini Android qurilma deb tanitmoqda (bloklanmaydi)
+            yt = YouTube(url, client='ANDROID')
+            audio_stream = yt.streams.get_audio_only()
+            if not audio_stream:
+                raise Exception("Audio havola topilmadi")
+            audio_stream.download(filename=file_name)
             
-        json_data = response.json()
-        audio_url = json_data.get("url")
+        await loop.run_in_executor(None, download_sync)
         
-        if not audio_url:
-             raise Exception("Audio havola topilmadi.")
-
-        if status_message: await status_message.edit("⬇️ *Скачиваю файл...*")
-        
-        audio_data = requests.get(audio_url)
-        with open(file_name, 'wb') as f:
-            f.write(audio_data.content)
-
         if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
         
         title = "Неизвестный трек"
@@ -181,13 +176,13 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         return True
         
     except Exception as e:
-        if status_message: await status_message.edit(f"❌ Ошибка:\n`Сервис перегружен, попробуйте позже.`")
+        if status_message: await status_message.edit(f"❌ Ошибка:\n`Сервис YouTube заблокировал запрос. Попробуйте еще раз.`\n({str(e)[:50]})")
         return False
     finally:
         if os.path.exists(file_name):
             try: os.remove(file_name)
             except: pass
 
-print("✅ Музыкальный бот успешно запущен (Cobalt Mode)!")
+print("✅ Музыкальный бот успешно запущен (Pytubefix Mode)!")
 keep_alive()
 app.run()
