@@ -6,10 +6,9 @@ import glob
 import uuid
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from youtubesearchpython import VideosSearch
 import yt_dlp
 
-# 1. API VA TOKEN MA'LUMOTLari
+# 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
 api_hash = "3c89cf48606380405e9bd3adcb5dc165"
 BOT_TOKEN = "514440846:AAHTjUfBDhpVmxDfY0AJSaQEE8sjJ_E6YZk"
@@ -47,8 +46,12 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        videos_search = VideosSearch(query, limit=30)
-        results = videos_search.result()['result']
+        # PRO USUL: Qidiruv uchun ham aynan kuchli yt-dlp ni o'zini ishlatamiz
+        ydl_opts = {'quiet': True, 'extract_flat': True}
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False))
+        
+        results = list(info.get('entries', []))
         
         if not results:
             await status_msg.edit("❌ Ничего не найдено. Попробуйте изменить запрос.")
@@ -78,9 +81,9 @@ async def show_page(client, message, uid, page, status_msg=None):
     row1, row2 = [], []
     
     for i, video in enumerate(page_results):
-        title = video.get('title', 'Неизвестно')
-        duration = video.get('duration', '?:??')
-        channel = video.get('channel', {}).get('name', '')
+        title = video.get('title') or 'Неизвестно'
+        duration = format_time(video.get('duration'))
+        channel = video.get('uploader') or ''
         
         text += f"**{i+1}.** {title} ({duration})\n"
         if channel: text += f"👤 {channel}\n\n"
@@ -144,7 +147,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         'outtmpl': f'{base_name}.%(ext)s',
         'quiet': True,
         'noplaylist': True,
-        # YouTube bloklamasligi uchun eng so'nggi o'tish usuli
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
     }
     
@@ -174,8 +176,8 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         if data_search:
              for video in data_search['results']:
                   if video.get('id') == vid_id:
-                       title = video.get('title', title)
-                       performer = video.get('channel', {}).get('name', performer)
+                       title = video.get('title') or title
+                       performer = video.get('uploader') or performer
                        break
         
         await client.send_audio(
@@ -196,6 +198,6 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             try: os.remove(file)
             except: pass
 
-print("✅ Бот запущен (Native yt-dlp Direct Mode)!")
+print("✅ Бот запущен (Yagona yt-dlp Tizimi)!")
 keep_alive()
 app.run()
