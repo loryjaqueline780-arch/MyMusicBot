@@ -4,6 +4,7 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 import os
 import glob
 import uuid
+import requests
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
@@ -32,7 +33,7 @@ def format_time(seconds):
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
     text = (
-        "🎧 **Добро пожаловать в Музыкальный Бот!**\n\n"
+        "🎧 **Добро пожаловать в Музыкальный Бот! (Dual Engine PRO)**\n\n"
         "Отправьте мне название песни или имя исполнителя."
     )
     await message.reply(text)
@@ -47,11 +48,6 @@ async def search_music(client, message):
     
     try:
         ydl_opts = {'quiet': True, 'extract_flat': True}
-        
-        # Qidiruv uchun ham pasport ulaymiz
-        if os.path.exists("cookies.txt"):
-            ydl_opts['cookiefile'] = "cookies.txt"
-            
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False))
         
@@ -65,8 +61,7 @@ async def search_music(client, message):
         await show_page(client, message, uid, 0, status_msg)
         
     except Exception as e:
-        # Xatoni OCHIQ ko'rsatamiz
-        await status_msg.edit(f"❌ Ошибка при поиске:\n`{str(e)[:150]}`")
+        await status_msg.edit(f"❌ Ошибка при поиске: {e}")
 
 async def show_page(client, message, uid, page, status_msg=None):
     data = user_searches.get(uid)
@@ -121,7 +116,7 @@ async def change_page(client, callback_query):
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
-    status_msg = await callback_query.message.reply("⏳ *Загрузка аудио...*")
+    status_msg = await callback_query.message.reply("⏳ *Загрузка аудио (Двигатель 1)...*")
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
 
 @app.on_callback_query(filters.regex(r"^dlall_"))
@@ -132,7 +127,7 @@ async def download_all(client, callback_query):
     
     start_idx = page * 10
     page_results = user_searches[uid]['results'][start_idx : start_idx+10]
-    status_msg = await callback_query.message.reply(f"📥 *Начинаю загрузку {len(page_results)} треков...*")
+    status_msg = await callback_query.message.reply(f"📥 *Начинаю пакетную загрузку...*")
     
     for i, video in enumerate(page_results):
         await status_msg.edit(f"⏳ *Загружаю трек {i+1} из {len(page_results)}...*\n🎵 {video.get('title')}")
@@ -146,38 +141,66 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     url = f"https://www.youtube.com/watch?v={vid_id}"
     uid_str = str(uuid.uuid4())[:8]
     base_name = f"track_{uid_str}"
+    file_to_send = None
     
-    ydl_opts = {
-        'format': 'm4a/bestaudio/best',
-        'outtmpl': f'{base_name}.%(ext)s',
-        'quiet': True,
-        'noplaylist': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
-    }
+    loop = asyncio.get_event_loop()
     
-    # PRO: Yuklash uchun ham pasport ulaymiz
-    if os.path.exists("cookies.txt"):
-        ydl_opts['cookiefile'] = "cookies.txt"
-    
+    # 1-DVIGATEL: Eng so'nggi yt-dlp (Pasportsiz, smartfon niqobida)
     try:
-        loop = asyncio.get_event_loop()
+        ydl_opts = {
+            'format': 'm4a/bestaudio/best',
+            'outtmpl': f'{base_name}.%(ext)s',
+            'quiet': True,
+            'noplaylist': True,
+            'nocheckcertificate': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
+        }
+        
         def download_sync():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=True)
                 
-        info = await loop.run_in_executor(None, download_sync)
+        await loop.run_in_executor(None, download_sync)
         
-        if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
-        
-        file_to_send = None
         for file in glob.glob(f"{base_name}.*"):
             if not file.endswith('.part') and not file.endswith('.ytdl'):
                 file_to_send = file
                 break
         
-        if not file_to_send:
-            raise Exception("Fayl topilmadi.")
+        if not file_to_send: raise Exception("Fayl topilmadi.")
+        
+    except Exception as e:
+        # 2-DVIGATEL: Agar YouTube 1-dvigatelni bloklasa, darhol Cobalt API'ga o'tamiz
+        try:
+            if status_message: await status_message.edit("🔄 *Двигатель 1 заблокирован, включаю Двигатель 2 (API)...*")
+            
+            def download_fallback():
+                headers = {"Accept": "application/json", "Content-Type": "application/json"}
+                data = {"url": url, "aFormat": "mp3", "isAudioOnly": True}
+                resp = requests.post("https://api.cobalt.tools/api/json", json=data, headers=headers)
+                resp_json = resp.json()
+                audio_url = resp_json.get("url")
+                
+                if audio_url:
+                    audio_data = requests.get(audio_url)
+                    fallback_file = f"{base_name}.mp3"
+                    with open(fallback_file, 'wb') as f:
+                        f.write(audio_data.content)
+                    return fallback_file
+                return None
+                
+            file_to_send = await loop.run_in_executor(None, download_fallback)
+            
+            if not file_to_send: raise Exception("Zaxira API ham ishlamadi.")
+            
+        except Exception as e2:
+            if status_message: await status_message.edit("❌ Ikkala dvigatel ham ishlamadi. Boshqa qo'shiq tanlang.")
+            return False
 
+    # Musiqani Telegramga jo'natish
+    try:
+        if status_message: await status_message.edit("⬆️ *Отправляю в Telegram...*")
+        
         title = "Неизвестный трек"
         performer = "Неизвестный исполнитель"
         
@@ -194,21 +217,18 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             audio=file_to_send,
             title=title,
             performer=performer,
-            caption="🎧 Скачано через бота"
+            caption="🎧 Скачано через бота (PRO Version)"
         )
         if status_message: await status_message.delete()
         return True
-        
-    except Exception as e:
-        error_msg = str(e)
-        # XATONI ENDI YASHIRMAYMIZ! Ochiq ko'rsatamiz.
-        if status_message: await status_message.edit(f"❌ Аниқ хатолик:\n\n`{error_msg[:150]}...`\n\n💡 Iltimos, GitHub'da cookies.txt fayli borligini tekshiring!")
+    except Exception as send_err:
+        if status_message: await status_message.edit("❌ Faylni Telegramga yuborishda xatolik yuz berdi.")
         return False
     finally:
         for file in glob.glob(f"{base_name}.*"):
             try: os.remove(file)
             except: pass
 
-print("✅ Бот запущен (PRO Mode)!")
+print("✅ Бот запущен (Qo'shaloq Dвигатель PRO Mode)!")
 keep_alive()
 app.run()
