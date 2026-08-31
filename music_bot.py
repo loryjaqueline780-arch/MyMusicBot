@@ -33,7 +33,7 @@ def format_time(seconds):
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
     text = (
-        "🎧 **Добро пожаловать в Музыкальный Бот! (Dual Engine PRO)**\n\n"
+        "🎧 **Добро пожаловать в Музыкальный Бот! (PRO MAX)**\n\n"
         "Отправьте мне название песни или имя исполнителя."
     )
     await message.reply(text)
@@ -61,7 +61,7 @@ async def search_music(client, message):
         await show_page(client, message, uid, 0, status_msg)
         
     except Exception as e:
-        await status_msg.edit(f"❌ Ошибка при поиске: {e}")
+        await status_msg.edit(f"❌ Ошибка при поиске:\n`{str(e)[:200]}`")
 
 async def show_page(client, message, uid, page, status_msg=None):
     data = user_searches.get(uid)
@@ -144,8 +144,10 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     file_to_send = None
     
     loop = asyncio.get_event_loop()
+    err_yt = ""
+    err_api = ""
     
-    # 1-DVIGATEL: Eng so'nggi yt-dlp (Pasportsiz, smartfon niqobida)
+    # 1-DVIGATEL: Yt-dlp (Kuchaytirilgan himoya)
     try:
         ydl_opts = {
             'format': 'm4a/bestaudio/best',
@@ -153,9 +155,8 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             'quiet': True,
             'noplaylist': True,
             'nocheckcertificate': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
+            'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'tv', 'web']}}
         }
-        
         def download_sync():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=True)
@@ -166,35 +167,54 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             if not file.endswith('.part') and not file.endswith('.ytdl'):
                 file_to_send = file
                 break
-        
-        if not file_to_send: raise Exception("Fayl topilmadi.")
+        if not file_to_send: raise Exception("Yt-dlp faylni saqlamadi.")
         
     except Exception as e:
-        # 2-DVIGATEL: Agar YouTube 1-dvigatelni bloklasa, darhol Cobalt API'ga o'tamiz
+        err_yt = str(e)
+        # 2-DVIGATEL: 4 Xil API Fallback 
         try:
-            if status_message: await status_message.edit("🔄 *Двигатель 1 заблокирован, включаю Двигатель 2 (API)...*")
+            if status_message: await status_message.edit("🔄 *Двигатель 1 заблокирован, включаю Двигатель 2 (API x4)...*")
             
             def download_fallback():
-                headers = {"Accept": "application/json", "Content-Type": "application/json"}
-                data = {"url": url, "aFormat": "mp3", "isAudioOnly": True}
-                resp = requests.post("https://api.cobalt.tools/api/json", json=data, headers=headers)
-                resp_json = resp.json()
-                audio_url = resp_json.get("url")
+                headers = {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                }
+                payloads = [
+                    {"url": url, "isAudioOnly": True, "aFormat": "mp3"},
+                    {"url": url, "downloadMode": "audio", "audioFormat": "mp3"}
+                ]
+                apis = [
+                    "https://co.wuk.sh/api/json",
+                    "https://cobalt.qewertyy.dev/api/json",
+                    "https://api.cobalt.tools/api/json",
+                    "https://api.cobalt.tools/"
+                ]
                 
-                if audio_url:
-                    audio_data = requests.get(audio_url)
-                    fallback_file = f"{base_name}.mp3"
-                    with open(fallback_file, 'wb') as f:
-                        f.write(audio_data.content)
-                    return fallback_file
-                return None
+                for api in apis:
+                    for data in payloads:
+                        try:
+                            resp = requests.post(api, json=data, headers=headers, timeout=15)
+                            if resp.status_code in [200, 201]:
+                                audio_url = resp.json().get("url")
+                                if audio_url:
+                                    audio_data = requests.get(audio_url, timeout=30)
+                                    fallback_file = f"{base_name}.mp3"
+                                    with open(fallback_file, 'wb') as f:
+                                        f.write(audio_data.content)
+                                    return fallback_file
+                        except:
+                            continue
+                raise Exception("Barcha 4 ta API server rad etdi.")
                 
             file_to_send = await loop.run_in_executor(None, download_fallback)
-            
-            if not file_to_send: raise Exception("Zaxira API ham ishlamadi.")
+            if not file_to_send: raise Exception("API faylni bermadi.")
             
         except Exception as e2:
-            if status_message: await status_message.edit("❌ Ikkala dvigatel ham ishlamadi. Boshqa qo'shiq tanlang.")
+            err_api = str(e2)
+            # ENG MUHIMI: Xatolarni yashirmaymiz, ekranga chiqaramiz!
+            if status_message: await status_message.edit(f"❌ **Иккала двигатель ҳам ишдамади!**\n\n**1-Xato (Yt-dlp):** `{err_yt[:100]}...`\n**2-Xato (API):** `{err_api[:100]}...`")
             return False
 
     # Musiqani Telegramga jo'natish
@@ -217,18 +237,18 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             audio=file_to_send,
             title=title,
             performer=performer,
-            caption="🎧 Скачано через бота (PRO Version)"
+            caption="🎧 Скачано через бота (PRO MAX)"
         )
         if status_message: await status_message.delete()
         return True
     except Exception as send_err:
-        if status_message: await status_message.edit("❌ Faylni Telegramga yuborishda xatolik yuz berdi.")
+        if status_message: await status_message.edit(f"❌ Yuborishda xato: {send_err}")
         return False
     finally:
         for file in glob.glob(f"{base_name}.*"):
             try: os.remove(file)
             except: pass
 
-print("✅ Бот запущен (Qo'shaloq Dвигатель PRO Mode)!")
+print("✅ Бот запущен (PRO MAX - 4x API Mode)!")
 keep_alive()
 app.run()
