@@ -46,8 +46,12 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        # PRO USUL: Qidiruv uchun ham aynan kuchli yt-dlp ni o'zini ishlatamiz
         ydl_opts = {'quiet': True, 'extract_flat': True}
+        
+        # Qidiruv uchun ham pasport ulaymiz
+        if os.path.exists("cookies.txt"):
+            ydl_opts['cookiefile'] = "cookies.txt"
+            
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False))
         
@@ -61,7 +65,8 @@ async def search_music(client, message):
         await show_page(client, message, uid, 0, status_msg)
         
     except Exception as e:
-        await status_msg.edit(f"❌ Ошибка при поиске: {e}")
+        # Xatoni OCHIQ ko'rsatamiz
+        await status_msg.edit(f"❌ Ошибка при поиске:\n`{str(e)[:150]}`")
 
 async def show_page(client, message, uid, page, status_msg=None):
     data = user_searches.get(uid)
@@ -143,12 +148,16 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     base_name = f"track_{uid_str}"
     
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'm4a/bestaudio/best',
         'outtmpl': f'{base_name}.%(ext)s',
         'quiet': True,
         'noplaylist': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
     }
+    
+    # PRO: Yuklash uchun ham pasport ulaymiz
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = "cookies.txt"
     
     try:
         loop = asyncio.get_event_loop()
@@ -191,13 +200,15 @@ async def process_download(client, chat_id, vid_id, status_message=None):
         return True
         
     except Exception as e:
-        if status_message: await status_message.edit(f"❌ Yuklab bo'lmadi. Boshqa qo'shiqni tanlang.")
+        error_msg = str(e)
+        # XATONI ENDI YASHIRMAYMIZ! Ochiq ko'rsatamiz.
+        if status_message: await status_message.edit(f"❌ Аниқ хатолик:\n\n`{error_msg[:150]}...`\n\n💡 Iltimos, GitHub'da cookies.txt fayli borligini tekshiring!")
         return False
     finally:
         for file in glob.glob(f"{base_name}.*"):
             try: os.remove(file)
             except: pass
 
-print("✅ Бот запущен (Yagona yt-dlp Tizimi)!")
+print("✅ Бот запущен (PRO Mode)!")
 keep_alive()
 app.run()
