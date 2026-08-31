@@ -1,5 +1,6 @@
 pyrogram
 tgcrypto
 Flask
-yt-dlp>=2024.08.06
+youtube-search-python
+pytubefix
 requests

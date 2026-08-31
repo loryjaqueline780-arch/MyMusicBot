@@ -7,7 +7,8 @@ import uuid
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-import yt_dlp
+from youtubesearchpython import VideosSearch
+from pytubefix import YouTube
 
 # 1. API VA TOKEN MA'LUMOTLARI
 api_id = 34019495
@@ -33,7 +34,7 @@ def format_time(seconds):
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
     text = (
-        "🎧 **Добро пожаловать в Музыкальный Бот! (PRO MAX)**\n\n"
+        "🎧 **Добро пожаловать в Музыкальный Бот! (PoToken PRO)**\n\n"
         "Отправьте мне название песни или имя исполнителя."
     )
     await message.reply(text)
@@ -47,11 +48,8 @@ async def search_music(client, message):
     status_msg = await message.reply("🔍 *Ищу музыку...*")
     
     try:
-        ydl_opts = {'quiet': True, 'extract_flat': True}
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(f"ytsearch30:{query}", download=False))
-        
-        results = list(info.get('entries', []))
+        videos_search = VideosSearch(query, limit=30)
+        results = videos_search.result()['result']
         
         if not results:
             await status_msg.edit("❌ Ничего не найдено. Попробуйте изменить запрос.")
@@ -61,7 +59,7 @@ async def search_music(client, message):
         await show_page(client, message, uid, 0, status_msg)
         
     except Exception as e:
-        await status_msg.edit(f"❌ Ошибка при поиске:\n`{str(e)[:200]}`")
+        await status_msg.edit(f"❌ Ошибка при поиске:\n`{str(e)[:150]}`")
 
 async def show_page(client, message, uid, page, status_msg=None):
     data = user_searches.get(uid)
@@ -82,8 +80,8 @@ async def show_page(client, message, uid, page, status_msg=None):
     
     for i, video in enumerate(page_results):
         title = video.get('title') or 'Неизвестно'
-        duration = format_time(video.get('duration'))
-        channel = video.get('uploader') or ''
+        duration = video.get('duration') or '?:??'
+        channel = video.get('channel', {}).get('name', '')
         
         text += f"**{i+1}.** {title} ({duration})\n"
         if channel: text += f"👤 {channel}\n\n"
@@ -116,7 +114,7 @@ async def change_page(client, callback_query):
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def download_single(client, callback_query):
     vid_id = callback_query.data.split("_")[1]
-    status_msg = await callback_query.message.reply("⏳ *Загрузка аудио (Двигатель 1)...*")
+    status_msg = await callback_query.message.reply("⏳ *Подключение к серверам...*")
     await process_download(client, callback_query.from_user.id, vid_id, status_msg)
 
 @app.on_callback_query(filters.regex(r"^dlall_"))
@@ -144,77 +142,62 @@ async def process_download(client, chat_id, vid_id, status_message=None):
     file_to_send = None
     
     loop = asyncio.get_event_loop()
-    err_yt = ""
+    err_main = ""
     err_api = ""
     
-    # 1-DVIGATEL: Yt-dlp (Kuchaytirilgan himoya)
+    # 1-DVIGATEL: Pytubefix + PoToken (YouTube himoyasini aylanib o'tish)
     try:
-        ydl_opts = {
-            'format': 'm4a/bestaudio/best',
-            'outtmpl': f'{base_name}.%(ext)s',
-            'quiet': True,
-            'noplaylist': True,
-            'nocheckcertificate': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'tv', 'web']}}
-        }
         def download_sync():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=True)
-                
-        await loop.run_in_executor(None, download_sync)
-        
-        for file in glob.glob(f"{base_name}.*"):
-            if not file.endswith('.part') and not file.endswith('.ytdl'):
-                file_to_send = file
-                break
-        if not file_to_send: raise Exception("Yt-dlp faylni saqlamadi.")
+            # 'ANDROID_MUSIC' mijozi va 'use_po_token=True' bizni bot emasligimizni isbotlaydi!
+            yt = YouTube(url, client='ANDROID_MUSIC', use_po_token=True)
+            audio = yt.streams.get_audio_only()
+            if not audio:
+                raise Exception("Audio stream topilmadi.")
+            
+            temp_file = f"{base_name}.m4a"
+            audio.download(filename=temp_file)
+            return temp_file
+            
+        file_to_send = await loop.run_in_executor(None, download_sync)
+        if not os.path.exists(file_to_send): raise Exception("Fayl saqlanmadi.")
         
     except Exception as e:
-        err_yt = str(e)
-        # 2-DVIGATEL: 4 Xil API Fallback 
+        err_main = str(e)
+        # 2-DVIGATEL: Yangi Maxfiy API'lar (Render'ni bloklamagan serverlar)
         try:
-            if status_message: await status_message.edit("🔄 *Двигатель 1 заблокирован, включаю Двигатель 2 (API x4)...*")
+            if status_message: await status_message.edit("🔄 *Двигатель 1 заблокирован, использую Резервные API...*")
             
             def download_fallback():
-                headers = {
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                }
-                payloads = [
-                    {"url": url, "isAudioOnly": True, "aFormat": "mp3"},
-                    {"url": url, "downloadMode": "audio", "audioFormat": "mp3"}
-                ]
-                apis = [
-                    "https://co.wuk.sh/api/json",
-                    "https://cobalt.qewertyy.dev/api/json",
-                    "https://api.cobalt.tools/api/json",
-                    "https://api.cobalt.tools/"
-                ]
+                # API 1
+                try:
+                    resp = requests.get(f"https://api.ryzendesu.vip/api/downloader/ytmp3?url={url}", timeout=15)
+                    dl_url = resp.json().get('url')
+                    if dl_url:
+                        audio_data = requests.get(dl_url, timeout=30)
+                        fb_file = f"{base_name}.mp3"
+                        with open(fb_file, 'wb') as f: f.write(audio_data.content)
+                        return fb_file
+                except: pass
                 
-                for api in apis:
-                    for data in payloads:
-                        try:
-                            resp = requests.post(api, json=data, headers=headers, timeout=15)
-                            if resp.status_code in [200, 201]:
-                                audio_url = resp.json().get("url")
-                                if audio_url:
-                                    audio_data = requests.get(audio_url, timeout=30)
-                                    fallback_file = f"{base_name}.mp3"
-                                    with open(fallback_file, 'wb') as f:
-                                        f.write(audio_data.content)
-                                    return fallback_file
-                        except:
-                            continue
-                raise Exception("Barcha 4 ta API server rad etdi.")
+                # API 2
+                try:
+                    resp = requests.get(f"https://api.siputzx.my.id/api/d/ytmp3?url={url}", timeout=15)
+                    dl_url = resp.json().get('data', {}).get('dl')
+                    if dl_url:
+                        audio_data = requests.get(dl_url, timeout=30)
+                        fb_file = f"{base_name}.mp3"
+                        with open(fb_file, 'wb') as f: f.write(audio_data.content)
+                        return fb_file
+                except: pass
+                
+                raise Exception("Barcha zaxira API'lar ishlamadi.")
                 
             file_to_send = await loop.run_in_executor(None, download_fallback)
             if not file_to_send: raise Exception("API faylni bermadi.")
             
         except Exception as e2:
             err_api = str(e2)
-            # ENG MUHIMI: Xatolarni yashirmaymiz, ekranga chiqaramiz!
-            if status_message: await status_message.edit(f"❌ **Иккала двигатель ҳам ишдамади!**\n\n**1-Xato (Yt-dlp):** `{err_yt[:100]}...`\n**2-Xato (API):** `{err_api[:100]}...`")
+            if status_message: await status_message.edit(f"❌ **Барча усуллар чекланди!**\n\n**Xato 1:** `{err_main[:100]}...`\n**Xato 2:** `{err_api[:100]}...`\n\nYouTube IP manzilni bloklagan.")
             return False
 
     # Musiqani Telegramga jo'natish
@@ -229,7 +212,7 @@ async def process_download(client, chat_id, vid_id, status_message=None):
              for video in data_search['results']:
                   if video.get('id') == vid_id:
                        title = video.get('title') or title
-                       performer = video.get('uploader') or performer
+                       performer = video.get('channel', {}).get('name', performer)
                        break
         
         await client.send_audio(
@@ -237,18 +220,18 @@ async def process_download(client, chat_id, vid_id, status_message=None):
             audio=file_to_send,
             title=title,
             performer=performer,
-            caption="🎧 Скачано через бота (PRO MAX)"
+            caption="🎧 Скачано через бота (PRO PoToken)"
         )
         if status_message: await status_message.delete()
         return True
     except Exception as send_err:
-        if status_message: await status_message.edit(f"❌ Yuborishda xato: {send_err}")
+        if status_message: await status_message.edit("❌ Yuborishda xato yuz berdi.")
         return False
     finally:
         for file in glob.glob(f"{base_name}.*"):
             try: os.remove(file)
             except: pass
 
-print("✅ Бот запущен (PRO MAX - 4x API Mode)!")
+print("✅ Бот запущен (PoToken + Secret API Mode)!")
 keep_alive()
 app.run()
